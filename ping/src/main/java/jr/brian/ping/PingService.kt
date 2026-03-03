@@ -86,8 +86,7 @@ class PingService : Service() {
     }
 
     private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle("Ping Active")
-        .setContentText("Looking for nearby players…")
+        .setContentTitle("Ping is Active")
         .setSmallIcon(R.drawable.outline_bluetooth_24)
         .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         .build()

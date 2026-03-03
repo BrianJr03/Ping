@@ -45,7 +45,7 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "jr.brian.brianjr03"
                 artifactId = "ping"
-                version = "0.0.3"
+                version = "0.0.4"
             }
         }
     }
