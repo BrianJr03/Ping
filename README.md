@@ -129,6 +129,24 @@ context.stopService(Intent(context, PingService::class.java))
 
 ---
 
+## Notification Customization
+
+By default, the foreground service notification shows **"Ping Active"** as the title and no body text. Override either before calling `startForegroundService`:
+
+```kotlin
+PingService.notificationTitle = "My App"          // replaces "Ping Active"
+PingService.notificationText  = "Finding nearby players…"  // omit or set "" to show no body
+```
+
+| Property | Type | Default | Behaviour |
+|---|---|---|---|
+| `notificationTitle` | `String` | `"Ping Active"` | Sets the notification title |
+| `notificationText` | `String?` | `null` | Sets the notification body; `null` or `""` skips `setContentText()` entirely |
+
+Set these **before** starting the service so the initial notification reflects your values.
+
+---
+
 ## PingProfile
 
 | Field | Type | Description |

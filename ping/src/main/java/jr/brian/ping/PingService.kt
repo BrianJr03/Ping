@@ -24,6 +24,8 @@ class PingService : Service() {
             }
 
         var onEncounter: ((String, PingProfile) -> Unit)? = null
+        var notificationTitle: String = "Ping is Active"
+        var notificationText: String? = null
         
         // Use a static map to track encounters across service restarts/re-starts
         private val lastEncounters = mutableMapOf<String, Long>()
@@ -74,6 +76,12 @@ class PingService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
+        .setContentTitle(notificationTitle)
+        .setSmallIcon(R.drawable.outline_bluetooth_24)
+        .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        .apply { notificationText?.takeIf { it.isNotEmpty() }?.let { setContentText(it) } }
+        .build()
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -84,10 +92,4 @@ class PingService : Service() {
         getSystemService(NotificationManager::class.java)
             .createNotificationChannel(channel)
     }
-
-    private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle("Ping is Active")
-        .setSmallIcon(R.drawable.outline_bluetooth_24)
-        .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-        .build()
 }
