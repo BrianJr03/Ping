@@ -22,7 +22,7 @@ Add the dependency to your app's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.github.YourGitHubUsername:ping:1.0.0")
+    implementation("com.github.BrianJr03:ping:1.0.0")
 }
 ```
 
@@ -60,7 +60,29 @@ Register the service and boot receiver:
 </receiver>
 ```
 
-Request `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and `BLUETOOTH_ADVERTISE` at runtime before starting the service (Android 12+).
+### Runtime permissions
+
+Use the built-in helper to request all required permissions at once:
+
+```kotlin
+// Register the launcher in your Activity/Fragment
+val permissionLauncher = registerForActivityResult(
+    ActivityResultContracts.RequestMultiplePermissions()
+) { results ->
+    if (results.values.all { it }) {
+        // all granted — safe to start the service
+    }
+}
+
+// Check and request
+with(PingUtil) {
+    if (!hasPingPermissions()) {
+        requestPingPermissions(permissionLauncher)
+    }
+}
+```
+
+`PING_PERMISSIONS` is also exposed as a top-level array if you need it directly (e.g. for `shouldShowRequestPermissionRationale`).
 
 ---
 
@@ -149,22 +171,22 @@ val winRate = profile.customData["winRate"].asDouble()
 
 ---
 
-## Battery Optimization
+## PingUtil
 
-For reliable background operation, prompt the user to disable battery optimization for your app:
+| Function | Description |
+|---|---|
+| `Context.hasPingPermissions()` | Returns `true` if all BLE permissions are granted |
+| `requestPingPermissions(launcher)` | Launches the system permission dialog for all required permissions |
+| `requestBatteryOptimizationExemption(context)` | Prompts the user to disable battery optimization for reliable background operation |
 
 ```kotlin
-PingUtil.requestBatteryOptimizationExemption(context)
+with(PingUtil) {
+    if (!hasPingPermissions()) {
+        requestPingPermissions(permissionLauncher)
+    }
+    requestBatteryOptimizationExemption(context)
+}
 ```
-
----
-
-## Publishing to JitPack
-
-1. Push your repo to GitHub
-2. Create a release/tag (e.g. `1.0.0`) on GitHub
-3. Visit `https://jitpack.io/#YourGitHubUsername/Ping` and trigger a build for that tag
-4. Use the dependency shown above in consuming apps
 
 ---
 
