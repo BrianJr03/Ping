@@ -20,7 +20,7 @@ class PingService : Service() {
 
         fun buildIntent(context: Context, profile: PingProfile) =
             Intent(context, PingService::class.java).apply {
-                putExtra(EXTRA_PROFILE, profile.toJson())
+                putExtra(EXTRA_PROFILE, profile.toBytes())
             }
 
         var onEncounter: ((String, PingProfile) -> Unit)? = null
@@ -45,8 +45,8 @@ class PingService : Service() {
         // Stop existing manager if running to avoid duplicate scans/broadcasts
         manager?.stop()
 
-        val profile = intent?.getStringExtra(EXTRA_PROFILE)
-            ?.let { PingProfile.fromJson(it) }
+        val profile = intent?.getByteArrayExtra(EXTRA_PROFILE)
+            ?.let { PingProfile.fromBytes(it) }
             ?: PingProfile()
 
         manager = PingManager(this, profile, object : PingCallback {
