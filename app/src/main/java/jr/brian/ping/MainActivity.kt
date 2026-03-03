@@ -305,9 +305,11 @@ fun PingScreen(
                         if (!canStart) return@Button
                         val intent = PingService.buildIntent(
                             context = context,
-                            userId = userId.trim(),
-                            displayName = displayName.trim(),
-                            message = message.trim()
+                            profile = PingProfile(
+                                userId = userId.trim(),
+                                displayName = displayName.trim(),
+                                message = message.trim()
+                            )
                         )
                         context.startForegroundService(intent)
                         isRunning = true

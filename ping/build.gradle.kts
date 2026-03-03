@@ -9,7 +9,7 @@ plugins {
 
 android {
     namespace = "jr.brian.ping"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 33
@@ -45,7 +45,7 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "jr.brian.brianjr03"
                 artifactId = "ping"
-                version = "0.0.1"
+                version = "0.0.2"
             }
         }
     }
