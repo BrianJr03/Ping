@@ -1,7 +1,8 @@
 package jr.brian.ping
 
+import com.ensarsarajcic.kotlinx.serialization.msgpack.MsgPack
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 @Serializable
 data class PingProfile(
@@ -9,15 +10,12 @@ data class PingProfile(
     val displayName: String = "",
     val message: String = "",
     val customData: Map<String, PingValue> = emptyMap(),
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    @SerialName("_v") val schemaVersion: Int = 1
 ) {
-    fun toJson(): String = Json.encodeToString(serializer(), this)
-
-    fun toBytes(): ByteArray = toJson().toByteArray(Charsets.UTF_8)
+    fun toBytes(): ByteArray = MsgPack.encodeToByteArray(serializer(), this)
 
     companion object {
-        fun fromJson(json: String): PingProfile = Json.decodeFromString(serializer(), json)
-
-        fun fromBytes(bytes: ByteArray): PingProfile = fromJson(String(bytes, Charsets.UTF_8))
+        fun fromBytes(bytes: ByteArray): PingProfile = MsgPack.decodeFromByteArray(serializer(), bytes)
     }
 }

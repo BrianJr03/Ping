@@ -29,16 +29,30 @@ import android.os.ParcelUuid
 import android.util.Log
 import androidx.annotation.RequiresPermission
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class PingManager(
     private val context: Context,
-    private var localProfile: PingProfile,
+    @Volatile private var localProfile: PingProfile,
     private val callback: PingCallback
 ) {
     companion object {
         private const val TAG = "PingManager"
         private const val RECONNECT_COOLDOWN_MS = 60_000L
+        private const val CONNECTION_TIMEOUT_MS = 15_000L
+        private const val MAX_CONCURRENT_CONNECTIONS = 4
         private const val MTU_SIZE = 512
 
         val SERVICE_UUID: UUID = UUID.fromString("0000abcd-0000-1000-8000-00805f9b34fb")
@@ -51,21 +65,19 @@ class PingManager(
     private var bleScanner: BluetoothLeScanner? = null
     private var bleAdvertiser: BluetoothLeAdvertiser? = null
 
-    private val discoveredDevices = mutableMapOf<String, Long>()
-    private val activeConnections = mutableMapOf<String, BluetoothGatt>()
+    private val discoveredDevices = ConcurrentHashMap<String, Long>()
+    private val connectionSemaphore = Semaphore(MAX_CONCURRENT_CONNECTIONS)
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Recreated on each start() so stop()+start() works correctly.
+    private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private fun hasPermission(permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
-    private fun hasConnectPermission() =
-        hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
-
-    private fun hasScanPermission() =
-        hasPermission(Manifest.permission.BLUETOOTH_SCAN)
-
-    private fun hasAdvertisePermission() =
-        hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+    private fun hasConnectPermission() = hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    private fun hasScanPermission() = hasPermission(Manifest.permission.BLUETOOTH_SCAN)
+    private fun hasAdvertisePermission() = hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
 
     fun start() {
         if (!bluetoothAdapter.isEnabled) {
@@ -73,6 +85,7 @@ class PingManager(
             callback.onStateChanged(false)
             return
         }
+        scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         startGattServer()
         startAdvertising()
         startScanning()
@@ -81,6 +94,8 @@ class PingManager(
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun stop() {
+        scope.cancel()
+
         bleAdvertiser?.let {
             if (hasAdvertisePermission()) {
                 try { it.stopAdvertising(advertiseCallback) }
@@ -95,13 +110,6 @@ class PingManager(
             }
         }
 
-        if (hasConnectPermission()) {
-            activeConnections.values.forEach {
-                try { it.disconnect(); it.close() }
-                catch (e: SecurityException) { Log.e(TAG, "Failed to disconnect", e) }
-            }
-        }
-        activeConnections.clear()
         gattServer?.close()
         gattServer = null
         callback.onStateChanged(false)
@@ -110,6 +118,8 @@ class PingManager(
     fun updateProfile(newProfile: PingProfile) {
         localProfile = newProfile
     }
+
+    // ── GATT server (we are the peripheral / responder) ──────────────────────
 
     private fun startGattServer() {
         if (!hasConnectPermission()) {
@@ -146,10 +156,7 @@ class PingManager(
             characteristic: BluetoothGattCharacteristic
         ) {
             if (characteristic.uuid != CHARACTERISTIC_UUID) return
-            if (!hasConnectPermission()) {
-                Log.e(TAG, "Missing BLUETOOTH_CONNECT for read response")
-                return
-            }
+            if (!hasConnectPermission()) return
             try {
                 val payload = localProfile.toBytes()
                 val chunk = if (offset < payload.size) payload.copyOfRange(offset, payload.size) else ByteArray(0)
@@ -173,8 +180,7 @@ class PingManager(
                 Log.e(TAG, "Failed to parse incoming profile", e)
                 mainHandler.post { callback.onEncounterError(device.address, e.message ?: "Parse error") }
             }
-            if (responseNeeded) {
-                if (!hasConnectPermission()) return
+            if (responseNeeded && hasConnectPermission()) {
                 try {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                 } catch (e: SecurityException) {
@@ -183,6 +189,8 @@ class PingManager(
             }
         }
     }
+
+    // ── Advertising ───────────────────────────────────────────────────────────
 
     private fun startAdvertising() {
         if (!hasAdvertisePermission()) {
@@ -223,6 +231,8 @@ class PingManager(
         }
     }
 
+    // ── Scanning ──────────────────────────────────────────────────────────────
+
     private fun startScanning() {
         if (!hasScanPermission()) {
             Log.e(TAG, "Missing scan permission")
@@ -247,105 +257,159 @@ class PingManager(
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val address = result.device.address
-            val lastSeen = discoveredDevices[address] ?: 0L
             val now = System.currentTimeMillis()
-            if (now - lastSeen > RECONNECT_COOLDOWN_MS) {
-                discoveredDevices[address] = now
-                connectAndExchange(result.device)
+            // Atomic check-and-set: only launch if cooldown has expired.
+            var shouldConnect = false
+            discoveredDevices.compute(address) { _, lastSeen ->
+                if (lastSeen == null || now - lastSeen > RECONNECT_COOLDOWN_MS) {
+                    shouldConnect = true
+                    now
+                } else {
+                    lastSeen
+                }
             }
+            if (shouldConnect) scope.launch { connectAndExchange(result.device) }
         }
+
         override fun onScanFailed(errorCode: Int) {
             Log.e(TAG, "Scan failed: $errorCode")
         }
     }
 
-    private fun connectAndExchange(device: BluetoothDevice) {
+    // ── Concurrent GATT client (we are the initiator) ────────────────────────
+
+    /**
+     * Bridges the async BluetoothGattCallback into suspend-friendly
+     * CompletableDeferred steps. If the device disconnects at any point,
+     * failAll() cancels every pending step so the coroutine surfaces the error
+     * immediately rather than hanging until the timeout.
+     */
+    private inner class GattSession {
+        private val connectionDeferred = CompletableDeferred<Unit>()
+        private val mtuDeferred = CompletableDeferred<Unit>()
+        private val servicesDeferred = CompletableDeferred<Unit>()
+        private val readDeferred = CompletableDeferred<ByteArray>()
+        private val writeDeferred = CompletableDeferred<Unit>()
+
+        private fun failAll(e: Exception) {
+            connectionDeferred.completeExceptionally(e)
+            mtuDeferred.completeExceptionally(e)
+            servicesDeferred.completeExceptionally(e)
+            readDeferred.completeExceptionally(e)
+            writeDeferred.completeExceptionally(e)
+        }
+
+        val gattCallback = object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                when (newState) {
+                    BluetoothProfile.STATE_CONNECTED ->
+                        connectionDeferred.complete(Unit)
+                    BluetoothProfile.STATE_DISCONNECTED ->
+                        failAll(Exception("Disconnected during exchange (status=$status)"))
+                }
+            }
+
+            override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS) mtuDeferred.complete(Unit)
+                else failAll(Exception("MTU negotiation failed (status=$status)"))
+            }
+
+            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS) servicesDeferred.complete(Unit)
+                else failAll(Exception("Service discovery failed (status=$status)"))
+            }
+
+            @Deprecated("Deprecated in Java")
+            @Suppress("DEPRECATION")
+            override fun onCharacteristicRead(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                status: Int
+            ) {
+                if (status == BluetoothGatt.GATT_SUCCESS) readDeferred.complete(characteristic.value)
+                else failAll(Exception("Characteristic read failed (status=$status)"))
+            }
+
+            override fun onCharacteristicWrite(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                status: Int
+            ) {
+                if (status == BluetoothGatt.GATT_SUCCESS) writeDeferred.complete(Unit)
+                else failAll(Exception("Characteristic write failed (status=$status)"))
+            }
+        }
+
+        suspend fun awaitConnect() = connectionDeferred.await()
+        suspend fun awaitMtu() = mtuDeferred.await()
+        suspend fun awaitServices() = servicesDeferred.await()
+        suspend fun awaitRead(): ByteArray = readDeferred.await()
+        suspend fun awaitWrite() = writeDeferred.await()
+    }
+
+    private suspend fun connectAndExchange(device: BluetoothDevice) {
         if (!hasConnectPermission()) {
             Log.e(TAG, "Missing BLUETOOTH_CONNECT for connectAndExchange")
             return
         }
-        Log.d(TAG, "Connecting to ${device.address}")
-        try {
-            device.connectGatt(context, false, object : BluetoothGattCallback() {
-
-                override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-                    if (!hasConnectPermission()) return
-                    try {
-                        when (newState) {
-                            BluetoothProfile.STATE_CONNECTED -> {
-                                activeConnections[gatt.device.address] = gatt
-                                gatt.requestMtu(MTU_SIZE)
-                            }
-                            BluetoothProfile.STATE_DISCONNECTED -> {
-                                activeConnections.remove(gatt.device.address)
-                                gatt.close()
-                            }
-                        }
-                    } catch (e: SecurityException) {
-                        Log.e(TAG, "Connection state change error", e)
-                    }
+        // Semaphore caps concurrent outgoing connections to what the BLE stack
+        // can reliably handle; excess devices queue here and connect in turn.
+        connectionSemaphore.withPermit {
+            Log.d(TAG, "Connecting to ${device.address}")
+            val session = GattSession()
+            val gatt: BluetoothGatt
+            try {
+                gatt = device.connectGatt(
+                    context, false, session.gattCallback, BluetoothDevice.TRANSPORT_LE
+                ) ?: run {
+                    Log.e(TAG, "connectGatt returned null for ${device.address}")
+                    return
                 }
+            } catch (e: SecurityException) {
+                Log.e(TAG, "connectGatt failed", e)
+                return
+            }
 
-                override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-                    if (!hasConnectPermission()) return
-                    try { gatt.discoverServices() }
-                    catch (e: SecurityException) { Log.e(TAG, "discoverServices failed", e) }
-                }
+            try {
+                withTimeout(CONNECTION_TIMEOUT_MS) {
+                    session.awaitConnect()
 
-                override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-                    if (!hasConnectPermission()) return
-                    if (status != BluetoothGatt.GATT_SUCCESS) {
-                        try { gatt.disconnect() } catch (e: SecurityException) { gatt.close() }
-                        return
-                    }
-                    val characteristic = gatt
-                        .getService(SERVICE_UUID)
+                    gatt.requestMtu(MTU_SIZE)
+                    session.awaitMtu()
+
+                    gatt.discoverServices()
+                    session.awaitServices()
+
+                    val characteristic = gatt.getService(SERVICE_UUID)
                         ?.getCharacteristic(CHARACTERISTIC_UUID)
+                        ?: throw Exception("Characteristic not found on ${device.address}")
 
-                    if (characteristic == null) {
-                        try { gatt.disconnect() } catch (e: SecurityException) { gatt.close() }
-                    } else {
-                        try { gatt.readCharacteristic(characteristic) }
-                        catch (e: SecurityException) { Log.e(TAG, "readCharacteristic failed", e) }
+                    @Suppress("DEPRECATION")
+                    gatt.readCharacteristic(characteristic)
+                    val remoteProfile = PingProfile.fromBytes(session.awaitRead())
+
+                    withContext(Dispatchers.Main) {
+                        callback.onEncounter(device.address, remoteProfile)
                     }
-                }
 
-                @Deprecated("Deprecated in Java")
-                override fun onCharacteristicRead(
-                    gatt: BluetoothGatt,
-                    characteristic: BluetoothGattCharacteristic,
-                    status: Int
-                ) {
-                    if (!hasConnectPermission()) return
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        try {
-                            val profile = PingProfile.fromBytes(characteristic.value)
-                            mainHandler.post { callback.onEncounter(gatt.device.address, profile) }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to parse remote profile", e)
-                        }
-                        try {
-                            characteristic.value = localProfile.toBytes()
-                            gatt.writeCharacteristic(characteristic)
-                        } catch (e: SecurityException) {
-                            Log.e(TAG, "writeCharacteristic failed", e)
-                        }
-                    }
-                }
+                    @Suppress("DEPRECATION")
+                    characteristic.value = localProfile.toBytes()
+                    gatt.writeCharacteristic(characteristic)
+                    session.awaitWrite()
 
-                override fun onCharacteristicWrite(
-                    gatt: BluetoothGatt,
-                    characteristic: BluetoothGattCharacteristic,
-                    status: Int
-                ) {
-                    if (!hasConnectPermission()) return
-                    Log.d(TAG, "Exchange complete with ${gatt.device.address}")
-                    try { gatt.disconnect() }
-                    catch (e: SecurityException) { Log.e(TAG, "disconnect failed", e) }
+                    Log.d(TAG, "Exchange complete with ${device.address}")
                 }
-            }, BluetoothDevice.TRANSPORT_LE)
-        } catch (e: SecurityException) {
-            Log.e(TAG, "connectGatt failed", e)
+            } catch (e: CancellationException) {
+                throw e  // propagate scope cancellation (stop() was called)
+            } catch (e: Exception) {
+                Log.e(TAG, "Exchange failed with ${device.address}: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    callback.onEncounterError(device.address, e.message ?: "Exchange error")
+                }
+            } finally {
+                try { gatt.disconnect() } catch (_: SecurityException) {}
+                try { gatt.close() } catch (_: SecurityException) {}
+            }
         }
     }
 }
