@@ -14,9 +14,14 @@ class PingService : Service() {
     companion object {
         private const val CHANNEL_ID = "ping_channel"
         private const val NOTIF_ID = 1001
-        private const val ENCOUNTER_COOLDOWN_MS = 30_000L
 
         const val EXTRA_PROFILE = "extra_profile"
+
+        /** Minimum ms between [onEncounter] callbacks for the same device. Default: 30s. */
+        var encounterCooldownMs: Long = 30_000L
+
+        /** Minimum ms between GATT connection attempts to the same device. Default: 60s. */
+        var reconnectCooldownMs: Long = 60_000L
 
         fun buildIntent(context: Context, profile: PingProfile) =
             Intent(context, PingService::class.java).apply {
@@ -49,12 +54,12 @@ class PingService : Service() {
             ?.let { PingProfile.fromBytes(it) }
             ?: PingProfile()
 
-        manager = PingManager(this, profile, object : PingCallback {
+        manager = PingManager(this, profile, reconnectCooldownMs, object : PingCallback {
             override fun onEncounter(deviceAddress: String, profile: PingProfile) {
                 val now = System.currentTimeMillis()
                 val lastTime = lastEncounters[deviceAddress] ?: 0L
-                
-                if (now - lastTime > ENCOUNTER_COOLDOWN_MS) {
+
+                if (now - lastTime > encounterCooldownMs) {
                     lastEncounters[deviceAddress] = now
                     onEncounter?.invoke(deviceAddress, profile)
                 }

@@ -46,6 +46,7 @@ import java.util.concurrent.ConcurrentHashMap
 class PingManager(
     private val context: Context,
     @Volatile private var localProfile: PingProfile,
+    private val reconnectCooldownMs: Long,
     private val callback: PingCallback
 ) {
     companion object {
@@ -261,7 +262,7 @@ class PingManager(
             // Atomic check-and-set: only launch if cooldown has expired.
             var shouldConnect = false
             discoveredDevices.compute(address) { _, lastSeen ->
-                if (lastSeen == null || now - lastSeen > RECONNECT_COOLDOWN_MS) {
+                if (lastSeen == null || now - lastSeen > reconnectCooldownMs) {
                     shouldConnect = true
                     now
                 } else {
