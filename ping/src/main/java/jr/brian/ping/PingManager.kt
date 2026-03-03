@@ -34,11 +34,11 @@ import java.util.UUID
 class PingManager(
     private val context: Context,
     private var localProfile: PingProfile,
+    private val reconnectCooldownMs: Long,
     private val callback: PingCallback
 ) {
     companion object {
         private const val TAG = "PingManager"
-        private const val RECONNECT_COOLDOWN_MS = 60_000L
         private const val MTU_SIZE = 512
 
         val SERVICE_UUID: UUID = UUID.fromString("0000abcd-0000-1000-8000-00805f9b34fb")
@@ -249,7 +249,7 @@ class PingManager(
             val address = result.device.address
             val lastSeen = discoveredDevices[address] ?: 0L
             val now = System.currentTimeMillis()
-            if (now - lastSeen > RECONNECT_COOLDOWN_MS) {
+            if (now - lastSeen > reconnectCooldownMs) {
                 discoveredDevices[address] = now
                 connectAndExchange(result.device)
             }

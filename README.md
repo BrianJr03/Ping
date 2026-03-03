@@ -213,14 +213,26 @@ with(PingUtil) {
 
 ## Timing & Cooldowns
 
-Ping enforces two independent cooldowns to prevent flooding:
+Ping has two independent cooldowns that serve different purposes. Both are configurable — set them before calling `startForegroundService`:
 
-| Cooldown | Value | Scope | Description |
-|---|---|---|---|
-| `ENCOUNTER_COOLDOWN_MS` | 30 seconds | Per device address | Minimum time between `onEncounter` callbacks for the same device. Tracked in a **static** map — persists across service restarts. |
-| `RECONNECT_COOLDOWN_MS` | 60 seconds | Per device address | Minimum time between GATT connection attempts to the same device during a scan session. |
+| Property | Default | What it gates |
+|---|---|---|
+| `PingService.encounterCooldownMs` | 30,000 ms | How often `onEncounter` fires for the **same device**. This is the app-level deduplication window — your callback won't be invoked again for this address until the window expires. Tracked in a static map so it survives service restarts. |
+| `PingService.reconnectCooldownMs` | 60,000 ms | How often a **GATT connection** is attempted to the same device. This is the BLE-level gate — even if the scan keeps seeing a device, Ping won't reconnect until this window expires. |
 
-**Implication for testing:** After a successful exchange, you won't see another `onEncounter` from the same device for 30 seconds, even if you restart the service. Call `PingService.clearEncounters()` to reset the cooldown map and force immediate re-encounters:
+**Why two cooldowns?** They solve different problems. `encounterCooldownMs` controls how often your app hears about a device. `reconnectCooldownMs` controls how often the radio actually connects — keeping it longer reduces battery drain and BLE congestion even when `encounterCooldownMs` is short. Setting `reconnectCooldownMs` shorter than `encounterCooldownMs` is valid but wastes radio time since the connection will complete but `onEncounter` will be suppressed.
+
+```kotlin
+// Tighten for a high-traffic event where re-encounters are expected frequently
+PingService.encounterCooldownMs = 10_000L   // 10s
+PingService.reconnectCooldownMs = 20_000L   // 20s
+
+// Loosen for a low-power background mode
+PingService.encounterCooldownMs = 120_000L  // 2 min
+PingService.reconnectCooldownMs = 300_000L  // 5 min
+```
+
+**Implication for testing:** After a successful exchange, you won't see another `onEncounter` from the same device until `encounterCooldownMs` has elapsed, even if you restart the service. Call `PingService.clearEncounters()` to reset the cooldown map and force immediate re-encounters:
 
 ```kotlin
 PingService.clearEncounters()
