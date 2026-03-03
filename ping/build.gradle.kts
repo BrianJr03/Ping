@@ -45,7 +45,7 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "jr.brian.brianjr03"
                 artifactId = "ping"
-                version = "0.0.5"
+                version = "0.0.6"
             }
         }
     }
@@ -55,7 +55,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
-    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.serialization.msgpack)
+    implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
