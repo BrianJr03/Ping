@@ -10,6 +10,7 @@ material = "1.13.0"
 kotlinxSerialization = "1.10.0"
 serializationMsgpack = "0.6.0"
 coroutines = "1.9.0"
+playServicesNearby = "19.3.0"
 activityCompose = "1.9.3"
 composeBom = "2024.12.01"
 
@@ -23,6 +24,7 @@ material = { group = "com.google.android.material", name = "material", version.r
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-serialization-msgpack = { group = "com.ensarsarajcic.kotlinx", name = "serialization-msgpack", version.ref = "serializationMsgpack" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+play-services-nearby = { group = "com.google.android.gms", name = "play-services-nearby", version.ref = "playServicesNearby" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }

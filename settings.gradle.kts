@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 rootProject.name = "Ping"
 include(":app")
 include(":ping")
+include(":ping-nearby")

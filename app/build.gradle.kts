@@ -48,6 +48,7 @@ kotlin {
 
 dependencies {
     implementation(project(":ping"))
+    implementation(project(":ping-nearby"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

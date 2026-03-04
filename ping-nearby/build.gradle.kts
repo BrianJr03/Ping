@@ -3,12 +3,11 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.serialization)
     `maven-publish`
 }
 
 android {
-    namespace = "jr.brian.ping"
+    namespace = "jr.brian.pingnearby"
     compileSdk = 36
 
     defaultConfig {
@@ -30,6 +29,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
 }
 
 kotlin {
@@ -44,7 +48,7 @@ afterEvaluate {
             create<MavenPublication>("release") {
                 from(components["release"])
                 groupId = "com.github.BrianJr03.Ping"
-                artifactId = "ping"
+                artifactId = "ping-nearby"
                 version = "0.8"
             }
         }
@@ -52,11 +56,9 @@ afterEvaluate {
 }
 
 dependencies {
+    implementation(project(":ping"))
+    implementation(libs.play.services.nearby)
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.appcompat)
-    implementation(libs.material)
-    implementation(libs.kotlinx.serialization.msgpack)
-    implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
