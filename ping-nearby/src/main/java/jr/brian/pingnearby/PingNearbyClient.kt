@@ -37,7 +37,7 @@ class PingNearbyClient(
     var onEndpointFound: ((endpointId: String, name: String) -> Unit)? = null
 
     /** Fires when a connection to a remote endpoint is fully established. */
-    var onConnected: ((endpointId: String) -> Unit)? = null
+    var onConnected: ((endpointId: String, name: String) -> Unit)? = null
 
     /** Fires when a previously connected endpoint disconnects. */
     var onDisconnected: ((endpointId: String) -> Unit)? = null
@@ -61,18 +61,25 @@ class PingNearbyClient(
 
     private var localDisplayName = ""
 
+    // Cached remote names keyed by endpointId, populated in onConnectionInitiated
+    private val pendingNames = mutableMapOf<String, String>()
+
     // ── Connection lifecycle ──────────────────────────────────────────────────
 
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
 
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
+            pendingNames[endpointId] = info.endpointName
             // Auto-accept all connections — no confirmation UI, matching Ping BLE behaviour.
             connectionsClient.acceptConnection(endpointId, payloadCallback)
         }
 
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
             if (result.status.statusCode == ConnectionsStatusCodes.STATUS_OK) {
-                onConnected?.invoke(endpointId)
+                val name = pendingNames.remove(endpointId) ?: endpointId
+                onConnected?.invoke(endpointId, name)
+            } else {
+                pendingNames.remove(endpointId)
             }
         }
 
@@ -169,6 +176,7 @@ class PingNearbyClient(
         connectionsClient.stopAdvertising()
         connectionsClient.stopDiscovery()
         connectionsClient.stopAllEndpoints()
+        pendingNames.clear()
         outgoingTempFiles.values.forEach { it.delete() }
         outgoingTempFiles.clear()
     }
