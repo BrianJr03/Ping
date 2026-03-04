@@ -18,13 +18,19 @@ dependencyResolutionManagement {
 }
 ```
 
-Add the dependency to your app's `build.gradle.kts`:
+Ping is split into two independent modules. Add whichever you need:
 
 ```kotlin
 dependencies {
-    implementation("com.github.BrianJr03:Ping:{latest-version}")
+    // Core BLE profile exchange (required)
+    implementation("com.github.BrianJr03.Ping:ping:0.8")
+
+    // Optional: peer-to-peer image & file transfer via Nearby Connections
+    implementation("com.github.BrianJr03.Ping:ping-nearby:0.8")
 }
 ```
+
+The two modules are fully independent — you can use either or both. See [NEARBY.md](NEARBY.md) for `ping-nearby` setup and usage.
 
 ---
 
@@ -156,6 +162,7 @@ Set these **before** starting the service so the initial notification reflects y
 | `message` | `String` | Optional short status message |
 | `customData` | `Map<String, PingValue>` | Arbitrary typed key-value data |
 | `timestamp` | `Long` | Auto-set to current time on creation |
+| `schemaVersion` | `Int` | Serialized as `_v`. Default `1`. Bump when making breaking changes to your `customData` format so receivers can detect stale profiles. |
 
 All fields are optional — `PingProfile()` with no arguments is valid.
 
@@ -242,26 +249,29 @@ PingService.clearEncounters()
 
 ## Payload Size Limit
 
-`PingProfile` is serialized as **UTF-8 JSON** and transferred over a single GATT characteristic. The requested MTU is **512 bytes**, giving a practical payload budget of roughly **511 bytes** for the entire serialized profile.
+`PingProfile` is serialized as **MessagePack** (binary) and transferred over a single GATT characteristic. The requested MTU is **512 bytes**, giving a practical payload budget of roughly **511 bytes** for the entire serialized profile.
 
-> **If the JSON exceeds the MTU, the exchange silently fails.** No error is thrown — the remote device simply won't receive a parseable profile.
+MessagePack is 20–40% more compact than JSON, providing roughly 100–200 extra bytes of headroom over the previous JSON encoding.
+
+> **If the serialized profile exceeds the MTU, the exchange silently fails.** No error is thrown — the remote device simply won't receive a parseable profile.
 
 Fields that contribute to the byte count:
 - `userId`, `displayName`, `message` — plain strings, count directly
-- `customData` — keys + values + JSON structure overhead (~10–15 bytes per entry)
-- `timestamp` — fixed 13-digit Long (~15 bytes in JSON)
+- `customData` — keys + values + MessagePack framing (~3–5 bytes per entry)
+- `timestamp` — fixed 8-byte Long
+- `schemaVersion` — 1 byte
 
 **Practical budgeting:**
 
-A minimal empty profile uses ~30 bytes of overhead. For `customData`, prefer short keys and compact value strings:
+A minimal empty profile uses ~15 bytes of overhead. For `customData`, prefer short keys and compact value strings:
 
 ```kotlin
-// ~65 bytes for one entry — leaves room for ~7 entries
+// ~40 bytes for one entry — significantly more room than JSON
 customData = mapOf("t" to "id|name|#FF001122|#FF334455|false".toPingValue())
 
-// Verbose keys add up fast — avoid if sharing multiple values
+// Verbose keys still add up — avoid if sharing many values
 customData = mapOf(
-    "primaryColor" to "#FF001122".toPingValue(),  // 30+ bytes just for this entry
+    "primaryColor" to "#FF001122".toPingValue(),
     "secondaryColor" to "#FF334455".toPingValue()
 )
 ```
@@ -272,6 +282,17 @@ If you need to pack multiple structured items (e.g. a list of themes), encode th
 // Pack multiple items into one key — stays well under the MTU
 val packed = items.joinToString(";") { "${it.id}|${it.name}|${it.color}" }
 customData = mapOf("items" to packed.toPingValue())
+```
+
+### Schema versioning
+
+Every profile includes a `schemaVersion` field (serialized as `_v`, default `1`). Bump it when you make a breaking change to your `customData` format so receivers can detect and ignore stale profiles:
+
+```kotlin
+PingService.onEncounter = { _, profile ->
+    if (profile.schemaVersion < 2) return@onEncounter  // ignore legacy format
+    // handle current format
+}
 ```
 
 ---
@@ -414,8 +435,8 @@ Device A (scanner)                    Device B (advertiser + scanner)
 If `onEncounter` never fires, check:
 1. Both devices have the service running
 2. Battery optimization is disabled on both
-3. The 30s encounter cooldown hasn't been hit — call `PingService.clearEncounters()` to reset
-4. The serialized profile fits within ~511 bytes
+3. The encounter cooldown hasn't been hit — call `PingService.clearEncounters()` to reset
+4. The serialized profile fits within ~511 bytes (MessagePack — more headroom than JSON)
 
 ---
 
@@ -424,3 +445,5 @@ If `onEncounter` never fires, check:
 - Android 13+ (minSdk 33)
 - Kotlin 2.x
 - A device with BLE advertising support
+
+`ping-nearby` additionally requires Google Play Services. See [NEARBY.md](NEARBY.md) for details.
