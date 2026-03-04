@@ -81,7 +81,7 @@ val permissionLauncher = registerForActivityResult(
 }
 
 // Check and request
-with(PingUtil) {
+with(PingPermissions) {
     if (!hasPingPermissions()) {
         requestPingPermissions(permissionLauncher)
     }
@@ -199,7 +199,7 @@ val winRate = profile.customData["winRate"]?.asDouble()
 
 ---
 
-## PingUtil
+## PingPermissions
 
 | Function | Description |
 |---|---|
@@ -208,7 +208,7 @@ val winRate = profile.customData["winRate"]?.asDouble()
 | `requestBatteryOptimizationExemption(context)` | Prompts the user to disable battery optimization for reliable background operation |
 
 ```kotlin
-with(PingUtil) {
+with(PingPermissions) {
     if (!hasPingPermissions()) {
         requestPingPermissions(permissionLauncher)
     }
@@ -362,7 +362,7 @@ themes.forEach { theme ->
 **Always call `requestBatteryOptimizationExemption`** — without it, background exchanges are unreliable on most devices:
 
 ```kotlin
-PingUtil.requestBatteryOptimizationExemption(context)
+PingPermissions.requestBatteryOptimizationExemption(context)
 ```
 
 For background exchanges to work:

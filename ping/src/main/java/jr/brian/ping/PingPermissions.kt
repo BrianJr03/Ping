@@ -17,7 +17,7 @@ val PING_PERMISSIONS = arrayOf(
 )
 
 @Suppress("unused")
-object PingUtil {
+object PingPermissions {
     fun Context.hasPingPermissions(): Boolean =
         PING_PERMISSIONS.all {
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
