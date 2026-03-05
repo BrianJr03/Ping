@@ -218,6 +218,14 @@ with(PingPermissions) {
 
 ---
 
+## Concurrent Connections
+
+When multiple Ping devices are in range simultaneously, Ping connects and exchanges profiles with all of them concurrently — each device gets its own coroutine and runs through the full GATT exchange in parallel. A semaphore caps simultaneous outgoing connections at **4** (the reliable limit for most Android BLE stacks). Devices beyond that queue and connect as slots free up, so no exchange is dropped — just briefly delayed.
+
+Each connection has a **15-second timeout**. If a peripheral stops responding mid-exchange, its slot is released and the error is reported via `onEncounterError`.
+
+---
+
 ## Timing & Cooldowns
 
 Ping has two independent cooldowns that serve different purposes. Both are configurable — set them before calling `startForegroundService`:
@@ -249,23 +257,27 @@ PingService.clearEncounters()
 
 ## Payload Size
 
-`PingProfile` is serialized as **MessagePack** (binary). The GATT exchange uses a **chunked notification protocol** — if the serialized profile exceeds the negotiated MTU (~509 bytes per packet), it is automatically split into sequential chunks and reassembled on the receiving end. There is no hard payload size limit enforced by Ping.
+`PingProfile` is serialized as **MessagePack** (binary) and transferred over a single GATT characteristic. The requested MTU is **512 bytes**, giving a practical payload budget of roughly **511 bytes** for the entire serialized profile.
 
-That said, keep profiles lean. More chunks means more BLE packets, more radio time, and a slower exchange. MessagePack is already 20–40% more compact than JSON, so typical profiles comfortably fit in a single packet.
+MessagePack is 20–40% more compact than JSON, which means roughly 100–200 extra bytes of headroom compared to the previous JSON encoding — more room for `customData` before hitting the MTU ceiling.
+
+> **If the serialized profile exceeds the MTU, the exchange silently fails.** No error is thrown — the remote device simply won't receive a parseable profile.
 
 Fields that contribute to the byte count:
 - `userId`, `displayName`, `message` — plain strings, count directly
-- `customData` — keys + values + MessagePack framing (~3–5 bytes per entry)
+- `customData` — keys + values + MessagePack framing (~3–5 bytes per entry, vs ~10–15 for JSON)
 - `timestamp` — fixed 8-byte Long
 - `schemaVersion` — 1 byte
 
-For `customData`, prefer short keys and compact value strings:
+**Practical budgeting:**
+
+A minimal empty profile uses ~15 bytes of overhead. For `customData`, prefer short keys and compact value strings:
 
 ```kotlin
-// Compact — likely fits in one packet
+// ~40 bytes for one entry — leaves room for many more entries vs JSON
 customData = mapOf("t" to "id|name|#FF001122|#FF334455|false".toPingValue())
 
-// Verbose keys add up — avoid when sharing many values
+// Verbose keys still add up — avoid if sharing many values
 customData = mapOf(
     "primaryColor" to "#FF001122".toPingValue(),
     "secondaryColor" to "#FF334455".toPingValue()
@@ -279,15 +291,13 @@ val packed = items.joinToString(";") { "${it.id}|${it.name}|${it.color}" }
 customData = mapOf("items" to packed.toPingValue())
 ```
 
-> **Media and file transfer is not supported over BLE.** Use `ping-nearby` (Nearby Connections API) for images, videos, GIFs, and arbitrary file transfers. BLE throughput (~300–500 KB/s) and the 255-chunk protocol cap make it unsuitable for media payloads.
-
 ### Schema versioning
 
-Every profile includes a `schemaVersion` field (serialized as `_v`, default `1`). Bump it when you make a breaking change to your `customData` format so receivers can detect and ignore stale profiles:
+Every profile includes a `schemaVersion` field (serialized as `_v`, default `1`). If you introduce a breaking change to how you encode `customData`, bump this value so receivers can detect and handle profiles from older app versions gracefully:
 
 ```kotlin
 PingService.onEncounter = { _, profile ->
-    if (profile.schemaVersion < 2) return@onEncounter  // ignore legacy format
+    if (profile.schemaVersion < 2) return@onEncounter  // ignore legacy profiles
     // handle current format
 }
 ```
@@ -413,30 +423,32 @@ PingService.onEncounter = { _, profile ->
 
 ## Exchange Flow (for debugging)
 
-Understanding the internal sequence helps diagnose failures:
+Understanding the internal sequence helps diagnose failures. All discovered devices are processed concurrently — the flow below happens in parallel for each peer, up to 4 at a time:
 
 ```
-Device A (scanner)                         Device B (advertiser + scanner)
-      |                                              |
-      |--- BLE scan finds Device B ---------------->|
-      |--- GATT connect -------------------------->|
-      |--- Request MTU (512) --------------------->|
-      |--- Discover services --------------------->|
-      |--- Enable notifications (CCCD write) ----->|
-      |--- Write characteristic (sends A profile)->|
-      |                          onEncounter(A's profile) fired on B
-      |                          B sends profile back via chunked notifications
-      |<-- Notification chunk 0 -------------------|
-      |<-- Notification chunk 1 -------------------|
-      |<-- ... (reassembled) ----------------------|
-      |<-- onEncounter(B's profile) fired          |
-      |--- Disconnect ---------------------------->|
+Device A (scanner)                    Device B (advertiser + scanner)
+      |                                         |
+      |--- BLE scan finds Device B ------------>|
+      |  [coroutine launched for Device B]      |
+      |--- GATT connect ----------------------->|
+      |--- Request MTU (512) ------------------>|
+      |--- Discover services ------------------>|
+      |--- Read characteristic (gets B profile)->|
+      |<-- onEncounter(B's profile) fired        |
+      |--- Write characteristic (sends A profile)>|
+      |<-- onEncounter(A's profile) fired on B   |
+      |--- Disconnect -------------------------->|
+
+      [simultaneously, if Device C is also in range]
+      |--- GATT connect ----------------------->| (Device C)
+      |    ... same exchange in parallel ...    |
 ```
 
 If `onEncounter` never fires, check:
 1. Both devices have the service running
 2. Battery optimization is disabled on both
-3. The encounter cooldown hasn't been hit — call `PingService.clearEncounters()` to reset
+3. The 30s encounter cooldown hasn't been hit — call `PingService.clearEncounters()` to reset
+4. The serialized profile fits within ~511 bytes (MessagePack — significantly more headroom than JSON)
 
 ---
 

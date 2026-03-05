@@ -79,6 +79,7 @@ class PingManager(
 ) {
     companion object {
         private const val TAG = "PingManager"
+        private const val RECONNECT_COOLDOWN_MS = 60_000L
         private const val CONNECTION_TIMEOUT_MS = 15_000L
         private const val MAX_CONCURRENT_CONNECTIONS = 4
         private const val MTU_SIZE = 512
