@@ -80,9 +80,9 @@ nearbyClient.onEndpointFound = { endpointId, name ->
     Log.d("Nearby", "Found $name ($endpointId)")
 }
 
-nearbyClient.onConnected = { endpointId ->
-    Log.d("Nearby", "Connected to $endpointId")
-    // Safe to call sendImage / sendBytes from here
+nearbyClient.onConnected = { endpointId, name ->
+    Log.d("Nearby", "Connected to $name ($endpointId)")
+    // Safe to call sendImage / sendFile / sendBytes from here
 }
 
 nearbyClient.onDisconnected = { endpointId ->
@@ -96,6 +96,13 @@ nearbyClient.onBytesReceived = { endpointId, bytes ->
 
 nearbyClient.onImageReceived = { endpointId, bitmap ->
     imageView.setImageBitmap(bitmap)
+}
+
+// Called for non-image files (videos, animated GIFs, etc.)
+// You are responsible for closing the ParcelFileDescriptor when done.
+nearbyClient.onFileReceived = { endpointId, pfd ->
+    // e.g. pass pfd.fileDescriptor to MediaPlayer or a GIF decoder
+    pfd.close()
 }
 
 nearbyClient.onTransferUpdate = { endpointId, progress ->
@@ -122,6 +129,17 @@ nearbyClient.stop()
 nearbyClient.sendImage(endpointId, bitmap)
 ```
 
+### Video / GIF / arbitrary file
+
+```kotlin
+// uri can point to a video, GIF, document, or any file the app can open
+nearbyClient.sendFile(endpointId, uri)
+```
+
+The receiver gets the file via `onFileReceived` as a `ParcelFileDescriptor`. For videos, pass it to `MediaPlayer`; for animated GIFs, use a library like Glide or Coil that accepts a `FileDescriptor`.
+
+> **GIF note:** If you send a GIF and the receiver tries `BitmapFactory.decodeFileDescriptor`, it will succeed — but only the first frame is decoded and the result is delivered via `onImageReceived` as a static `Bitmap`. Use `onFileReceived` + an animation-aware library to preserve the animation.
+
 ### Bytes
 
 ```kotlin
@@ -145,7 +163,7 @@ nearbyClient.sendBytes(endpointId, payload)
 | | Core `:ping` (BLE) | `:ping-nearby` |
 |---|---|---|
 | Transport | Bluetooth LE GATT | Nearby Connections (BLE + Wi-Fi) |
-| Payload | `PingProfile` (MessagePack, ≤511 bytes) | Arbitrary bytes or images (no size limit) |
+| Payload | `PingProfile` (MessagePack, ≤511 bytes) | Arbitrary bytes, images, videos, GIFs, or any file (no size limit) |
 | Requires GMS | No | Yes |
 | Background | Yes (foreground service) | App must be in foreground |
 | Auto-exchange | Profiles exchanged on discovery | Connection auto-accepted; sending is manual |

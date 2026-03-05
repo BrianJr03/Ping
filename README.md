@@ -23,10 +23,10 @@ Ping is split into two independent modules. Add whichever you need:
 ```kotlin
 dependencies {
     // Core BLE profile exchange (required)
-    implementation("com.github.BrianJr03.Ping:ping:0.8")
+    implementation("com.github.BrianJr03.Ping:ping:0.8.2")
 
     // Optional: peer-to-peer image & file transfer via Nearby Connections
-    implementation("com.github.BrianJr03.Ping:ping-nearby:0.8")
+    implementation("com.github.BrianJr03.Ping:ping-nearby:0.8.2")
 }
 ```
 
@@ -247,13 +247,11 @@ PingService.clearEncounters()
 
 ---
 
-## Payload Size Limit
+## Payload Size
 
-`PingProfile` is serialized as **MessagePack** (binary) and transferred over a single GATT characteristic. The requested MTU is **512 bytes**, giving a practical payload budget of roughly **511 bytes** for the entire serialized profile.
+`PingProfile` is serialized as **MessagePack** (binary). The GATT exchange uses a **chunked notification protocol** — if the serialized profile exceeds the negotiated MTU (~509 bytes per packet), it is automatically split into sequential chunks and reassembled on the receiving end. There is no hard payload size limit enforced by Ping.
 
-MessagePack is 20–40% more compact than JSON, providing roughly 100–200 extra bytes of headroom over the previous JSON encoding.
-
-> **If the serialized profile exceeds the MTU, the exchange silently fails.** No error is thrown — the remote device simply won't receive a parseable profile.
+That said, keep profiles lean. More chunks means more BLE packets, more radio time, and a slower exchange. MessagePack is already 20–40% more compact than JSON, so typical profiles comfortably fit in a single packet.
 
 Fields that contribute to the byte count:
 - `userId`, `displayName`, `message` — plain strings, count directly
@@ -261,15 +259,13 @@ Fields that contribute to the byte count:
 - `timestamp` — fixed 8-byte Long
 - `schemaVersion` — 1 byte
 
-**Practical budgeting:**
-
-A minimal empty profile uses ~15 bytes of overhead. For `customData`, prefer short keys and compact value strings:
+For `customData`, prefer short keys and compact value strings:
 
 ```kotlin
-// ~40 bytes for one entry — significantly more room than JSON
+// Compact — likely fits in one packet
 customData = mapOf("t" to "id|name|#FF001122|#FF334455|false".toPingValue())
 
-// Verbose keys still add up — avoid if sharing many values
+// Verbose keys add up — avoid when sharing many values
 customData = mapOf(
     "primaryColor" to "#FF001122".toPingValue(),
     "secondaryColor" to "#FF334455".toPingValue()
@@ -279,10 +275,11 @@ customData = mapOf(
 If you need to pack multiple structured items (e.g. a list of themes), encode them into a single value using a delimiter:
 
 ```kotlin
-// Pack multiple items into one key — stays well under the MTU
 val packed = items.joinToString(";") { "${it.id}|${it.name}|${it.color}" }
 customData = mapOf("items" to packed.toPingValue())
 ```
+
+> **Media and file transfer is not supported over BLE.** Use `ping-nearby` (Nearby Connections API) for images, videos, GIFs, and arbitrary file transfers. BLE throughput (~300–500 KB/s) and the 255-chunk protocol cap make it unsuitable for media payloads.
 
 ### Schema versioning
 
@@ -374,7 +371,7 @@ For background exchanges to work:
 
 ## Both Devices Must Be Running the Service
 
-Ping performs a **symmetric exchange** — both devices advertise and scan simultaneously. The initiating device (scanner) connects, reads the remote profile, then writes its own profile back.
+Ping performs a **symmetric exchange** — both devices advertise and scan simultaneously. The initiating device (scanner) connects and writes its profile to the remote device, which responds by notifying its own profile back.
 
 This means:
 - If only one device is running the service, the other won't initiate a connection and no exchange occurs
@@ -419,24 +416,27 @@ PingService.onEncounter = { _, profile ->
 Understanding the internal sequence helps diagnose failures:
 
 ```
-Device A (scanner)                    Device B (advertiser + scanner)
-      |                                         |
-      |--- BLE scan finds Device B ------------>|
-      |--- GATT connect ----------------------->|
-      |--- Request MTU (512) ------------------>|
-      |--- Discover services ------------------>|
-      |--- Read characteristic (gets B profile)->|
-      |<-- onEncounter(B's profile) fired        |
-      |--- Write characteristic (sends A profile)>|
-      |<-- onEncounter(A's profile) fired on B   |
-      |--- Disconnect -------------------------->|
+Device A (scanner)                         Device B (advertiser + scanner)
+      |                                              |
+      |--- BLE scan finds Device B ---------------->|
+      |--- GATT connect -------------------------->|
+      |--- Request MTU (512) --------------------->|
+      |--- Discover services --------------------->|
+      |--- Enable notifications (CCCD write) ----->|
+      |--- Write characteristic (sends A profile)->|
+      |                          onEncounter(A's profile) fired on B
+      |                          B sends profile back via chunked notifications
+      |<-- Notification chunk 0 -------------------|
+      |<-- Notification chunk 1 -------------------|
+      |<-- ... (reassembled) ----------------------|
+      |<-- onEncounter(B's profile) fired          |
+      |--- Disconnect ---------------------------->|
 ```
 
 If `onEncounter` never fires, check:
 1. Both devices have the service running
 2. Battery optimization is disabled on both
 3. The encounter cooldown hasn't been hit — call `PingService.clearEncounters()` to reset
-4. The serialized profile fits within ~511 bytes (MessagePack — more headroom than JSON)
 
 ---
 

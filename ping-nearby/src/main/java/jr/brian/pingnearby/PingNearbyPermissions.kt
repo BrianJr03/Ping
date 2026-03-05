@@ -7,7 +7,6 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.core.content.ContextCompat
 
 object PingNearbyPermissions {
-
     /**
      * All permissions required by the Nearby Connections API.
      *

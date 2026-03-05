@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
 import com.google.android.gms.nearby.connection.ConnectionInfo
@@ -24,11 +25,12 @@ import java.io.FileOutputStream
  * Handles peer-to-peer image and data transfer using the Nearby Connections API.
  *
  * Advertises and discovers simultaneously using [Strategy.P2P_CLUSTER]. Connections
- * are accepted automatically without UI, matching the core Ping BLE behaviour.
+ * are accepted automatically without UI, matching the core Ping BLE behavior.
  *
  * @param context Application or service context.
  * @param serviceId Unique identifier for this session — use the app's package name by convention.
  */
+@Suppress("unused")
 class PingNearbyClient(
     private val context: Context,
     private val serviceId: String
@@ -48,8 +50,8 @@ class PingNearbyClient(
     /** Fires when a complete image file has been received and decoded. */
     var onImageReceived: ((endpointId: String, bitmap: Bitmap) -> Unit)? = null
 
-    /** Fires when a non-image file (e.g. video) is received. */
-    var onFileReceived: ((endpointId: String, file: File) -> Unit)? = null
+    /** Fires when a non-image file (e.g. video) is received. Caller is responsible for closing [pfd]. */
+    var onFileReceived: ((endpointId: String, pfd: ParcelFileDescriptor) -> Unit)? = null
 
     /** Fires during file transfers with a 0..1 progress fraction. */
     var onTransferUpdate: ((endpointId: String, progress: Float) -> Unit)? = null
@@ -70,7 +72,7 @@ class PingNearbyClient(
 
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
             pendingNames[endpointId] = info.endpointName
-            // Auto-accept all connections — no confirmation UI, matching Ping BLE behaviour.
+            // Auto-accept all connections — no confirmation UI, matching Ping BLE behavior.
             connectionsClient.acceptConnection(endpointId, payloadCallback)
         }
 
@@ -115,12 +117,13 @@ class PingNearbyClient(
                     onBytesReceived?.invoke(endpointId, bytes)
                 }
                 Payload.Type.FILE -> {
-                    val file = payload.asFile()?.asJavaFile() ?: return
-                    val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+                    val pfd = payload.asFile()?.asParcelFileDescriptor() ?: return
+                    val bitmap = BitmapFactory.decodeFileDescriptor(pfd.fileDescriptor)
                     if (bitmap != null) {
+                        pfd.close()
                         onImageReceived?.invoke(endpointId, bitmap)
                     } else {
-                        onFileReceived?.invoke(endpointId, file)
+                        onFileReceived?.invoke(endpointId, pfd)
                     }
                 }
                 else -> Unit
