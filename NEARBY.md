@@ -89,6 +89,16 @@ nearbyClient.onDisconnected = { endpointId ->
     Log.d("Nearby", "Disconnected from $endpointId")
 }
 
+// Preferred: auto-classified by magic bytes — Image, Gif, or Video
+nearbyClient.onMediaReceived = { endpointId, bytes, type ->
+    when (type) {
+        is PingMediaType.Image -> { /* decode with BitmapFactory */ }
+        is PingMediaType.Gif   -> { /* decode with Glide / Coil */ }
+        is PingMediaType.Video -> { /* write bytes and open with MediaPlayer */ }
+    }
+}
+
+// Low-level alternative: raw bytes without classification
 nearbyClient.onBytesReceived = { endpointId, bytes ->
     val message = String(bytes, Charsets.UTF_8)
     Log.d("Nearby", "Bytes from $endpointId: $message")
@@ -146,6 +156,29 @@ The receiver gets the file via `onFileReceived` as a `ParcelFileDescriptor`. For
 val payload = "hello".toByteArray(Charsets.UTF_8)
 nearbyClient.sendBytes(endpointId, payload)
 ```
+
+When bytes are received, `onMediaReceived` fires with the auto-detected `PingMediaType` before `onBytesReceived`. Use `onMediaReceived` when the payload may be media; use `onBytesReceived` for plain text or structured data.
+
+---
+
+## Media Type Detection
+
+`PingMediaDetector` inspects the leading bytes (magic numbers) of a `ByteArray` to identify the media type. It is also available as a standalone utility:
+
+```kotlin
+val type = PingMediaDetector.detect(bytes)  // PingMediaType.Image | .Gif | .Video
+
+// Individual checks
+val isPng = PingMediaDetector.isPng(bytes)
+```
+
+| Type | Detection |
+|---|---|
+| `PingMediaType.Gif` | GIF magic bytes `GIF` (0x47 0x49 0x46) |
+| `PingMediaType.Video` | MP4 `ftyp` box (bytes 4–7) or MKV EBML header |
+| `PingMediaType.Image` | Everything else (JPEG, PNG, WebP, etc.) |
+
+> Use `isPng` to distinguish PNG from other images when needed — the `Image` type covers all non-GIF, non-video formats.
 
 ---
 
