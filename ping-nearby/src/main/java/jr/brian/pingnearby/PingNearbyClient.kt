@@ -47,6 +47,12 @@ class PingNearbyClient(
     /** Fires when raw bytes are received from a remote endpoint. */
     var onBytesReceived: ((endpointId: String, bytes: ByteArray) -> Unit)? = null
 
+    /**
+     * Fires when bytes are received and automatically classified by [PingMediaDetector].
+     * Use this instead of [onBytesReceived] when the payload may be an image, GIF, or video.
+     */
+    var onMediaReceived: ((endpointId: String, bytes: ByteArray, type: PingMediaType) -> Unit)? = null
+
     /** Fires when a complete image file has been received and decoded. */
     var onImageReceived: ((endpointId: String, bitmap: Bitmap) -> Unit)? = null
 
@@ -114,6 +120,8 @@ class PingNearbyClient(
             when (payload.type) {
                 Payload.Type.BYTES -> {
                     val bytes = payload.asBytes() ?: return
+                    val type = PingMediaDetector.detect(bytes)
+                    onMediaReceived?.invoke(endpointId, bytes, type)
                     onBytesReceived?.invoke(endpointId, bytes)
                 }
                 Payload.Type.FILE -> {
