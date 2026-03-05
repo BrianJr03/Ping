@@ -18,13 +18,19 @@ dependencyResolutionManagement {
 }
 ```
 
-Add the dependency to your app's `build.gradle.kts`:
+Ping is split into two independent modules. Add whichever you need:
 
 ```kotlin
 dependencies {
-    implementation("com.github.BrianJr03:Ping:{latest-version}")
+    // Core BLE profile exchange (required)
+    implementation("com.github.BrianJr03.Ping:ping:0.8.2")
+
+    // Optional: peer-to-peer image & file transfer via Nearby Connections
+    implementation("com.github.BrianJr03.Ping:ping-nearby:0.8.2")
 }
 ```
+
+The two modules are fully independent — you can use either or both. See [NEARBY.md](NEARBY.md) for `ping-nearby` setup and usage.
 
 ---
 
@@ -75,7 +81,7 @@ val permissionLauncher = registerForActivityResult(
 }
 
 // Check and request
-with(PingUtil) {
+with(PingPermissions) {
     if (!hasPingPermissions()) {
         requestPingPermissions(permissionLauncher)
     }
@@ -193,7 +199,7 @@ val winRate = profile.customData["winRate"]?.asDouble()
 
 ---
 
-## PingUtil
+## PingPermissions
 
 | Function | Description |
 |---|---|
@@ -202,7 +208,7 @@ val winRate = profile.customData["winRate"]?.asDouble()
 | `requestBatteryOptimizationExemption(context)` | Prompts the user to disable battery optimization for reliable background operation |
 
 ```kotlin
-with(PingUtil) {
+with(PingPermissions) {
     if (!hasPingPermissions()) {
         requestPingPermissions(permissionLauncher)
     }
@@ -249,7 +255,7 @@ PingService.clearEncounters()
 
 ---
 
-## Payload Size Limit
+## Payload Size
 
 `PingProfile` is serialized as **MessagePack** (binary) and transferred over a single GATT characteristic. The requested MTU is **512 bytes**, giving a practical payload budget of roughly **511 bytes** for the entire serialized profile.
 
@@ -281,7 +287,6 @@ customData = mapOf(
 If you need to pack multiple structured items (e.g. a list of themes), encode them into a single value using a delimiter:
 
 ```kotlin
-// Pack multiple items into one key — stays well under the MTU
 val packed = items.joinToString(";") { "${it.id}|${it.name}|${it.color}" }
 customData = mapOf("items" to packed.toPingValue())
 ```
@@ -364,7 +369,7 @@ themes.forEach { theme ->
 **Always call `requestBatteryOptimizationExemption`** — without it, background exchanges are unreliable on most devices:
 
 ```kotlin
-PingUtil.requestBatteryOptimizationExemption(context)
+PingPermissions.requestBatteryOptimizationExemption(context)
 ```
 
 For background exchanges to work:
@@ -376,7 +381,7 @@ For background exchanges to work:
 
 ## Both Devices Must Be Running the Service
 
-Ping performs a **symmetric exchange** — both devices advertise and scan simultaneously. The initiating device (scanner) connects, reads the remote profile, then writes its own profile back.
+Ping performs a **symmetric exchange** — both devices advertise and scan simultaneously. The initiating device (scanner) connects and writes its profile to the remote device, which responds by notifying its own profile back.
 
 This means:
 - If only one device is running the service, the other won't initiate a connection and no exchange occurs
@@ -452,3 +457,5 @@ If `onEncounter` never fires, check:
 - Android 13+ (minSdk 33)
 - Kotlin 2.x
 - A device with BLE advertising support
+
+`ping-nearby` additionally requires Google Play Services. See [NEARBY.md](NEARBY.md) for details.

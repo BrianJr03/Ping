@@ -43,9 +43,9 @@ afterEvaluate {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
-                groupId = "jr.brian.brianjr03"
+                groupId = "com.github.BrianJr03.Ping"
                 artifactId = "ping"
-                version = "0.7"
+                version = "0.8.3"
             }
         }
     }
