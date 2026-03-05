@@ -62,6 +62,9 @@ class PingNearbyClient(
     /** Fires during file transfers with a 0..1 progress fraction. */
     var onTransferUpdate: ((endpointId: String, progress: Float) -> Unit)? = null
 
+    /** Fires when a file transfer fails or is canceled before completion. */
+    var onTransferFailed: ((endpointId: String) -> Unit)? = null
+
     private val connectionsClient = Nearby.getConnectionsClient(context)
 
     // Temp files created for outgoing image sends, cleaned up on completion
@@ -139,18 +142,22 @@ class PingNearbyClient(
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
-            val progress = if (update.totalBytes > 0) {
-                update.bytesTransferred.toFloat() / update.totalBytes
-            } else 0f
-            onTransferUpdate?.invoke(endpointId, progress)
-
             when (update.status) {
-                PayloadTransferUpdate.Status.SUCCESS,
                 PayloadTransferUpdate.Status.FAILURE,
                 PayloadTransferUpdate.Status.CANCELED -> {
                     outgoingTempFiles.remove(update.payloadId)?.delete()
+                    onTransferFailed?.invoke(endpointId)
                 }
-                else -> Unit
+                PayloadTransferUpdate.Status.SUCCESS -> {
+                    outgoingTempFiles.remove(update.payloadId)?.delete()
+                    onTransferUpdate?.invoke(endpointId, 1f)
+                }
+                else -> {
+                    val progress = if (update.totalBytes > 0) {
+                        update.bytesTransferred.toFloat() / update.totalBytes
+                    } else 0f
+                    onTransferUpdate?.invoke(endpointId, progress)
+                }
             }
         }
     }
