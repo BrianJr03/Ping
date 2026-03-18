@@ -3,6 +3,7 @@ package jr.brian.ping
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -81,6 +82,9 @@ class PingService : Service() {
         /** Body text shown in the foreground notification. `null` or `""` omits the body entirely. */
         var notificationText: String? = null
 
+        /** Optional [PendingIntent] launched when the user taps the foreground notification. */
+        var notificationIntent: PendingIntent? = null
+
         // Static map so cooldown tracking survives service restarts within the same process.
         private val lastEncounters = mutableMapOf<String, Long>()
 
@@ -140,6 +144,7 @@ class PingService : Service() {
         .setSmallIcon(R.drawable.outline_bluetooth_24)
         .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         .apply { notificationText?.takeIf { it.isNotEmpty() }?.let { setContentText(it) } }
+        .apply { notificationIntent?.let { setContentIntent(it) } }
         .build()
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
